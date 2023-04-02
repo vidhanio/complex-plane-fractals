@@ -7,13 +7,13 @@ module Main (main) where
 import Data.Complex (Complex (..))
 import Data.Function (on, (&))
 import Lib (Frame (..), ZResult (..), calculateZ)
-import System.Environment (getArgs)
+import System.Environment (getArgs, getProgName)
 import System.Exit (exitFailure, exitSuccess)
 import System.IO (hPutStrLn, stderr)
-import Text.Read (readMaybe)
+import Text.Read (readEither)
 
 main :: IO ()
-main = getArgs >>= flip parse defaultFrame >>= run
+main = getArgs >>= flip parseArgs defaultFrame >>= run
   where
     defaultFrame =
         Frame
@@ -25,24 +25,26 @@ main = getArgs >>= flip parse defaultFrame >>= run
             , algorithm = mandelbrot
             }
 
-parse :: [String] -> Frame -> IO Frame
-parse args frame =
+parseArgs :: [String] -> Frame -> IO Frame
+parseArgs args frame =
     case args of
-        ["-h"] -> printHelp >> exitSuccess
-        "-w" : w : xs -> parseOrExit w >>= parse xs . (\width -> frame{width})
-        "-h" : h : xs -> parseOrExit h >>= parse xs . (\height -> frame{height})
-        "-i" : i : xs -> parseOrExit i >>= parse xs . (\maxIterations -> frame{maxIterations})
-        "-o" : o : xs -> parseOrExit o >>= parse xs . (\offset -> frame{offset})
-        "-s" : s : xs -> parseOrExit s >>= parse xs . (\scale -> frame{scale})
+        ["help"] -> printHelp >> exitSuccess
+        "-w" : w : xs -> readOrExit "width" w >>= parseArgs xs . (\width -> frame{width})
+        "-h" : h : xs -> readOrExit "height" h >>= parseArgs xs . (\height -> frame{height})
+        "-i" : i : xs -> readOrExit "maxIterations" i >>= parseArgs xs . (\maxIterations -> frame{maxIterations})
+        "-o" : o : xs -> readOrExit "offset" o >>= parseArgs xs . (\offset -> frame{offset})
+        "-s" : s : xs -> readOrExit "scale" s >>= parseArgs xs . (\scale -> frame{scale})
         "-a" : "mandelbrot" : _ -> pure frame{algorithm = mandelbrot}
         "-a" : "burningShip" : _ -> pure frame{algorithm = burningShip}
+        "-a" : a : _ -> unrecognizedAndExit "algorithm" a
+        f@['-', _] : _ -> unrecognizedAndExit "flag" f
+        cmd : _ -> unrecognizedAndExit "command" cmd
         [] -> pure frame
-        _ -> printHelp >> exitFailure
   where
-    parseOrExit :: (Read a) => String -> IO a
-    parseOrExit s =
-        readMaybe s
-            & maybe (printHelp >> exitFailure) pure
+    readOrExit :: (Read a) => String -> String -> IO a
+    readOrExit flag s =
+        readEither s
+            & either (const $ hPutStrLn stderr flag >> exitFailure) pure
 
 mandelbrot :: Complex Double -> Complex Double -> Complex Double
 mandelbrot c z =
@@ -56,13 +58,22 @@ run :: Frame -> IO ()
 run frame = printHeader frame >> printPixels frame
 
 printHelp :: IO ()
-printHelp = hPutStrLn stderr "Usage: complex-plane-fractals [-h] [-w width] [-h height] [-i maxIterations] [-o offset] [-s scale] [-a algorithm]"
+printHelp = do
+    progName <- getProgName
+
+    hPutStrLn stderr $ unwords ["Usage:", progName, options]
+  where
+    options = "[help] [-w width] [-h height] [-i maxIterations] [-o offset] [-s scale] [-a algorithm]"
 
 printHeader :: Frame -> IO ()
 printHeader frame = do
     putStrLn "P3"
     putStrLn . unwords $ map show [width frame, height frame]
     putStrLn "255"
+
+unrecognizedAndExit :: String -> String -> IO a
+unrecognizedAndExit what s = do
+    hPutStrLn stderr (unwords ["Unrecognised", what <> ":", s]) >> printHelp >> exitFailure
 
 printPixels :: Frame -> IO ()
 printPixels frame = do
